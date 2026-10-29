@@ -1,0 +1,103 @@
+name: 安全微伴云端运行
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 运行模式（首次请选择环境检查，再配置 Secrets）
+        type: choice
+        required: true
+        default: environment-check
+        options:
+          - environment-check
+          - login-check
+          - study
+      school:
+        description: 学校全称
+        required: true
+        default: 福建师范大学
+        type: string
+  push:
+    paths:
+      - .github/workflows/cloud-run.yml
+      - cloud_run.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weban-cloud
+  cancel-in-progress: false
+
+jobs:
+  environment:
+    name: 环境检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: 安装依赖
+        run: python -m pip install -r requirements.txt
+      - name: 检查源码和程序入口
+        run: |
+          python -m compileall -q main.py client.py api.py captcha.py cloud_run.py
+          python main.py --help
+          python -c "import cv2; cv2.dnn.readNetFromONNX('captcha_model.onnx'); print('OCR model loaded')"
+      - name: 检查浏览器
+        run: |
+          command -v google-chrome
+          google-chrome --headless --disable-gpu --dump-dom about:blank
+      - name: 检查完成
+        run: echo "依赖、源码、模型和浏览器检查通过。真实账号登录需另选 login-check。"
+
+  run:
+    name: 账号任务
+    if: github.event_name == 'workflow_dispatch' && inputs.mode != 'environment-check'
+    needs: environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      WB_CLOUD_MODE: ${{ inputs.mode }}
+      WB_TENANT_NAME: ${{ inputs.school }}
+      WB_USERNAME: ${{ secrets.WB_USERNAME }}
+      WB_PASSWORD: ${{ secrets.WB_PASSWORD }}
+      WB_USER_ID: ${{ secrets.WB_USER_ID }}
+      WB_TOKEN: ${{ secrets.WB_TOKEN }}
+      WB_DATA_DIR: ${{ runner.temp }}/weban-data
+      WB_BROWSER_PATH: /usr/bin/google-chrome
+      WB_EXAM_MODE: 'false'
+      WB_DEBUG: 'false'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: 检查账号配置
+        shell: python
+        run: |
+          import os, sys
+          password_ok = bool(os.environ["WB_USERNAME"] and os.environ["WB_PASSWORD"])
+          token_ok = bool(os.environ["WB_USER_ID"] and os.environ["WB_TOKEN"])
+          if not (password_ok or token_ok):
+              print("::error::请先在仓库 Settings > Secrets and variables > Actions 配置 WB_USERNAME + WB_PASSWORD，或 WB_USER_ID + WB_TOKEN。")
+              sys.exit(2)
+      - name: 安装依赖
+        run: python -m pip install -r requirements.txt
+      - name: 运行任务
+        run: python cloud_run.py
+      - name: 清理临时账号数据
+        if: always()
+        shell: python
+        run: |
+          import os, shutil
+          shutil.rmtree(os.environ["WB_DATA_DIR"], ignore_errors=True)

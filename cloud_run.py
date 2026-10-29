@@ -24,7 +24,8 @@ def main():
         account.update(username=username, password=password)
     if mode == "login-check":
         from client import WeBanClient, _check_code_ok
-        kwargs = {"browser_path": os.environ.get("WB_BROWSER_PATH") or None}
+        kwargs = {"browser_path": os.environ.get("WB_BROWSER_PATH") or None,
+                  "log": app.logger.bind(account="登录检查")}
         if user_id and token:
             client = WeBanClient(tenant, user={"userId": user_id, "token": token}, **kwargs)
             # Token must be validated by the server, not merely present locally.

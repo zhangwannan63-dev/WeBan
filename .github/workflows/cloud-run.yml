@@ -12,6 +12,7 @@ on:
           - environment-check
           - login-check
           - study
+          - study-and-exam
       school:
         description: 学校全称
         required: true
@@ -71,7 +72,6 @@ jobs:
       WB_TOKEN: ${{ secrets.WB_TOKEN }}
       WB_DATA_DIR: /tmp/weban-data
       WB_BROWSER_PATH: /usr/bin/google-chrome
-      WB_EXAM_MODE: 'false'
       WB_DEBUG: 'false'
       PYTHONUNBUFFERED: '1'
     steps:

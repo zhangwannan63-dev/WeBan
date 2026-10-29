@@ -23,13 +23,13 @@ def main():
     else:
         account.update(username=username, password=password)
     if mode == "login-check":
-        from client import WeBanClient
+        from client import WeBanClient, _check_code_ok
         kwargs = {"browser_path": os.environ.get("WB_BROWSER_PATH") or None}
         if user_id and token:
             client = WeBanClient(tenant, user={"userId": user_id, "token": token}, **kwargs)
             # Token must be validated by the server, not merely present locally.
             result = client.api.list_my_project()
-            ok = str(result.get("code")) == "0"
+            ok = _check_code_ok(result)
         else:
             client = WeBanClient(tenant, username, password, **kwargs)
             ok = bool(client.login())

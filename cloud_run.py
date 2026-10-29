@@ -5,7 +5,7 @@ import sys
 
 def main():
     mode = os.environ.get("WB_CLOUD_MODE", "login-check")
-    if mode not in {"login-check", "study"}:
+    if mode not in {"login-check", "study", "study-and-exam"}:
         print("Unsupported run mode.", file=sys.stderr)
         return 2
     tenant = os.environ.get("WB_TENANT_NAME", "").strip()
@@ -37,7 +37,8 @@ def main():
         print("登录检查通过。" if ok else "登录检查失败，请检查账号或 Token。")
         return 0 if ok else 1
     ok = app.run_account(account, {
-        "study_mode": "true", "exam_mode": "false",
+        "study_mode": "true", "exam_mode": "true" if mode == "study-and-exam" else "false",
+        "exam_submit_match_rate": 100,
         "study_time": "20,10", "video_speed": 1,
         "max_workers": 1, "debug": False,
     }, {"enable": False}, 1)

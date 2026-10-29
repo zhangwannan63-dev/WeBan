@@ -69,7 +69,7 @@ jobs:
       WB_PASSWORD: ${{ secrets.WB_PASSWORD }}
       WB_USER_ID: ${{ secrets.WB_USER_ID }}
       WB_TOKEN: ${{ secrets.WB_TOKEN }}
-      WB_DATA_DIR: ${{ runner.temp }}/weban-data
+      WB_DATA_DIR: /tmp/weban-data
       WB_BROWSER_PATH: /usr/bin/google-chrome
       WB_EXAM_MODE: 'false'
       WB_DEBUG: 'false'

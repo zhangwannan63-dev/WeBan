@@ -696,6 +696,22 @@ def _question_trace_flow(html: str, script: str) -> tuple[int, int]:
     raise RuntimeError("题目返回正文后的轨迹路径无法完整解析，已停止学习")
 
 
+def _minimum_reading_seconds(script: str) -> float:
+    """Read a literal Date.now millisecond guard; never evaluate page code."""
+    if not re.search(r"startTime\s*=\s*Date\.now\s*\(", script):
+        return 0.0
+    if not re.search(r"timeDifference\s*=\s*currentTime\s*-\s*startTime", script):
+        return 0.0
+    limits = []
+    for match in re.finditer(r"\btimeDifference\s*(>=|>)\s*([0-9.]+(?:\s*\*\s*[0-9.]+)*)\s*\)", script):
+        value = 1.0
+        for factor in match.group(2).split("*"):
+            value *= float(factor.strip())
+        if 0 < value <= 3600000:
+            limits.append(value / 1000 + (0.001 if match.group(1) == ">" else 0))
+    return max(limits, default=0.0)
+
+
 def _course_completion_timing(script: str, has_questions: bool | None = None) -> tuple[bool, float] | None:
     """提取完课相对最终轨迹的顺序及延迟；分支不一致时不猜。"""
     finishes = list(re.finditer(r"\bfinishWxCourse\s*\(\s*\)", script))
@@ -1700,6 +1716,7 @@ jupiter_fallback=true 时也补翻页轨迹。再答题，最后完课。
             }
         )
 
+        reading_start = time.monotonic()
         nonstr_map = item_info.get("nonstr_map", {})
         total_step = item_info.get("total_step", 0)
         total_step_source = item_info.get("total_step_source", "")
@@ -1815,6 +1832,10 @@ jupiter_fallback=true 时也补翻页轨迹。再答题，最后完课。
                 )
                 study_time = video_need
         remaining = study_time - elapsed
+        reading_seconds = item_info.get("minimum_reading_seconds", 0)
+        if reading_seconds > 0:
+            self.log.info(f"页面最低阅读时长 {reading_seconds:g}s，按页面要求等待")
+            remaining = max(remaining, reading_seconds + 2 - (time.monotonic() - reading_start))
         if remaining > 0:
             self.log.info(
                 f"等待学习时长 {self._format_duration(remaining)} (已用 {self._format_duration(elapsed)}/{self._format_duration(study_time)})"
@@ -2289,6 +2310,7 @@ jupiter_fallback=true 时也补翻页轨迹。再答题，最后完课。
                     scripts.append(_fetch_text(self.api.session, script_url, referer=html_url))
             script = _strip_js_comments("\n".join(scripts))
             html = _expand_course_pages(html, script)
+            result["minimum_reading_seconds"] = _minimum_reading_seconds(script)
             result["has_exam"] = _check_exam(script)
             result["loads_questions"] = bool(re.search(r"getQuestions\s*\(", script))
             result["completion_timing"] = _course_completion_timing(script)

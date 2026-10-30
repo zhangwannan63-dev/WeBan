@@ -1,5 +1,6 @@
 import hashlib
 import json
+from urllib.parse import urlsplit
 import time
 from base64 import b64encode, urlsafe_b64decode, urlsafe_b64encode
 from random import randint
@@ -67,7 +68,7 @@ def handle_response(response: requests.Response) -> dict[str, Any]:
 class LoggingSession:
     """统一的网络请求、debug 日志和基本浏览器头。
 
-    与官网 ajax 一样不自动重发；学习、答题、完课请求不能在响应不确定时重复写入。
+    仅课程静态资源 GET 可重试；学习、答题、完课及交卷不自动重发。
     """
 
     DEFAULT_HEADERS: ClassVar[dict[str, str]] = {
@@ -100,11 +101,42 @@ class LoggingSession:
                 if val is not None:
                     parts.append(f"{key}={val}")
             self.log.debug(" | ".join(parts))
-        try:
-            response = self._session.request(method, url, **kwargs)
-        except requests.RequestException as e:
-            self.log.error(f"{method} {url} 请求异常: {e}")
-            raise
+        # Larger timeouts also apply to API calls, but only static resources may retry.
+        timeout = kwargs.get("timeout") or (30, 60)
+        if isinstance(timeout, (int, float)):
+            timeout = (max(30, timeout), max(60, timeout))
+        else:
+            timeout = (max(30, timeout[0] or 30), max(60, timeout[1] or 60))
+        kwargs["timeout"] = timeout
+        resource = urlsplit(url)
+        retryable = method.upper() == "GET" and (
+            resource.hostname == "mcwk.mycourse.cn"
+            and resource.path.startswith("/course/")
+            or resource.hostname == "jxstatic.mycourse.cn"
+            and resource.path.startswith("/WEIBAN/resource/")
+        )
+        attempts = 4 if retryable else 1
+        for attempt in range(attempts):
+            try:
+                response = self._session.request(method, url, **kwargs)
+            except (requests.Timeout, requests.ConnectionError, requests.exceptions.ChunkedEncodingError) as e:
+                if attempt + 1 == attempts:
+                    self.log.error(f"{method} {resource.hostname} 请求失败（{type(e).__name__}）")
+                    raise
+                delay = 3 * (2 ** attempt)
+                self.log.warning(f"课程资源网络超时/断连，{delay}s 后重试（{attempt + 2}/{attempts}）")
+                time.sleep(delay)
+                continue
+            except requests.RequestException:
+                self.log.error(f"{method} {resource.hostname} 请求失败")
+                raise
+            if retryable and response.status_code in (502, 503, 504) and attempt + 1 < attempts:
+                delay = 3 * (2 ** attempt)
+                response.close()
+                self.log.warning(f"课程资源暂时不可用，{delay}s 后重试（{attempt + 2}/{attempts}）")
+                time.sleep(delay)
+                continue
+            break
         if self.debug and "mycourse.cn" in url:
             content_type = response.headers.get("Content-Type", "")
             if not content_type or not content_type.lower().startswith(

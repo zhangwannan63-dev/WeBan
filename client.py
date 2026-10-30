@@ -2206,10 +2206,10 @@ jupiter_fallback=true 时也补翻页轨迹。再答题，最后完课。
                     )
 
                 # 检查提交匹配率
-                if match_rate < exam_submit_match_rate and not random_answer:
+                if match_rate < exam_submit_match_rate:
                     self.log.error(
                         f"题库匹配率 {match_rate:.1f}% 低于阈值 {exam_submit_match_rate}%，"
-                        f"且 random_answer=false，放弃交卷"
+                        f"放弃作答和交卷；随机作答不能绕过提交门槛"
                     )
                     continue
 

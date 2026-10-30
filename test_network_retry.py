@@ -3,6 +3,21 @@ from unittest.mock import Mock, patch
 import requests
 from api import LoggingSession
 
+class ReadingDurationTests(unittest.TestCase):
+    def test_article_two_minute_guard(self):
+        from client import _minimum_reading_seconds
+        script = "const startTime = Date.now(); const timeDifference = currentTime - startTime; if (timeDifference >= 2 * 60 * 1000) { finishWxCourse(); }"
+        self.assertEqual(_minimum_reading_seconds(script), 120)
+
+    def test_plain_course_has_no_extra_guard(self):
+        from client import _minimum_reading_seconds
+        self.assertEqual(_minimum_reading_seconds("finishWxCourse();"), 0)
+
+    def test_expression_is_not_executed(self):
+        from client import _minimum_reading_seconds
+        script = "startTime = Date.now(); timeDifference = currentTime - startTime; if (timeDifference >= alert(120000)) {}"
+        self.assertEqual(_minimum_reading_seconds(script), 0)
+
 class RetryTests(unittest.TestCase):
     def session(self, effects):
         client = LoggingSession(log=Mock())

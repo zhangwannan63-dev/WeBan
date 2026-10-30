@@ -309,6 +309,19 @@ def _detect_non_interactive() -> bool:
 NON_INTERACTIVE = _detect_non_interactive()
 
 
+def _pause_before_exit() -> None:
+    """Keep interactive consoles open even when startup raises SystemExit."""
+    if not NON_INTERACTIVE:
+        try:
+            input("程序已停止，请查看 logs 目录中的日志。按回车键退出")
+        except (EOFError, OSError, KeyboardInterrupt):
+            pass
+
+
+import atexit
+atexit.register(_pause_before_exit)
+
+
 def _resolve_version() -> str:
     """版本号单一来源：pyproject.toml（打包后从冻结资源读取），importlib.metadata 作回退"""
     candidates = []
@@ -839,7 +852,7 @@ def run_account(
         log.error(f"参数错误: {e}")
         return False
     except Exception as e:  # noqa: BLE001 -- 入口兜底，任何未预期异常都记录并返回失败
-        log.error(f"运行失败: {e}")
+        log.exception("运行失败，详细调用栈已写入账号日志")
         traceback.print_exc(file=sys.stderr)
         return False
     finally:
@@ -1112,8 +1125,3 @@ if __name__ == "__main__":
         logger.error(f"运行失败: {e}")
         traceback.print_exc(file=sys.stderr)
 
-    if not NON_INTERACTIVE:
-        try:
-            input("按回车键退出")
-        except EOFError:
-            pass

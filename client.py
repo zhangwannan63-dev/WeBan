@@ -126,6 +126,17 @@ def _extract_map(content: str) -> dict:
     return {}
 
 
+class CourseCompletionError(RuntimeError):
+    """A completion response failed; keep its code separate from transport errors."""
+
+    def __init__(self, course_prefix: str, result: dict):
+        self.detail_code = str(result.get("detailCode", ""))
+        super().__init__(
+            f"{course_prefix} 完成响应异常：code={result.get('code')}，"
+            f"detailCode={self.detail_code}"
+        )
+
+
 # 课程分类：chooseType、显示名、需求数字段、已完成数字段
 COURSE_CATEGORIES = (
     (3, "必修课", "requiredNum", "requiredFinishedNum"),
@@ -1484,6 +1495,8 @@ class WeBanClient:
                             project_prefix,
                             answers_json,
                             force_restudy,
+                            choose_type=choose_type[0],
+                            category_code=category["categoryCode"],
                         ):
                             return
 
@@ -1526,6 +1539,9 @@ class WeBanClient:
         project_prefix: str,
         answers_json: dict,
         force_restudy: bool,
+        *,
+        choose_type: int = 3,
+        category_code: str | None = None,
     ) -> bool:
         """学习单门课程并校验进度是否更新（折叠/扁平两条列表路径共用）。
 
@@ -1540,14 +1556,44 @@ class WeBanClient:
             if progress_before.get("code", -1) == "0":
                 d = progress_before["data"]
                 finished_before = sum(d[done] for _, _, _, done in COURSE_CATEGORIES)
-            ok = self._study_one_course(
-                course,
-                task,
-                category_prefix,
-                project_prefix,
-                answers_json,
-                force_restudy,
-            )
+            try:
+                ok = self._study_one_course(
+                    course, task, category_prefix, project_prefix,
+                    answers_json, force_restudy,
+                )
+            except CourseCompletionError as error:
+                if error.detail_code != "-101":
+                    raise
+                # Never replay a completion request. Only the same course's
+                # server-side finished flag may resolve an ambiguous response.
+                verified = False
+                for delay in (0, 2, 5):
+                    if delay:
+                        time.sleep(delay)
+                    try:
+                        verified = self._course_finished_on_server(
+                            course, task, choose_type, category_code
+                        )
+                    except PermissionError:
+                        raise
+                    except OSError:
+                        continue
+                    if verified:
+                        break
+                if not verified:
+                    try:
+                        self.get_progress(task["userProjectId"], project_prefix)
+                    except PermissionError:
+                        raise
+                    except OSError:
+                        self.log.warning("平台进度暂时无法读取，不能确认本课程完成")
+                    raise RuntimeError(
+                        f"{error}；平台未确认本课程完成，已停止，未重发完课请求"
+                    ) from error
+                self.log.warning(
+                    f"{course_prefix}：完课响应 -101，但平台已确认本课程 finished=1，继续下一门"
+                )
+                ok = True
             if not ok:
                 raise PermissionError("检测到行为异常或账号锁定，已停止当前账号")
             progress_after = self.get_progress(task["userProjectId"], project_prefix)
@@ -1569,6 +1615,45 @@ class WeBanClient:
             # 未完成的课程下次运行会自动重学
             self.log.warning(f"{course_prefix}：网络异常，跳过本门课程（{e}）")
         return True
+
+    def _course_finished_on_server(
+        self, course: dict, task: dict, choose_type: int,
+        category_code: str | None,
+    ) -> bool:
+        """Read the exact course in its project/type; totals alone are insufficient."""
+        resource_id = course.get("resourceId")
+        if not resource_id:
+            return False
+        page = 1
+        while page <= 1000:
+            if category_code is not None:
+                result = self.api.list_course(
+                    task["userProjectId"], category_code, choose_type
+                )
+            else:
+                result = self.api.list_flat_course(
+                    task["userProjectId"], choose_type, page, 12
+                )
+            if "code" not in result or not _check_code_ok(result):
+                raise RuntimeError("完课状态查询失败，已停止，未重发完课请求")
+            data = result.get("data")
+            if category_code is not None:
+                courses = data
+                total_pages = 1
+            else:
+                if not isinstance(data, dict):
+                    raise RuntimeError("完课状态分页响应异常，已停止")
+                courses = data.get("paginateData")
+                total_pages = int(data.get("totalPages", 1) or 1)
+            if not isinstance(courses, list):
+                raise RuntimeError("完课状态课程列表异常，已停止")
+            for candidate in courses:
+                if candidate.get("resourceId") == resource_id:
+                    return str(candidate.get("finished")) == "1"
+            if page >= total_pages:
+                return False
+            page += 1
+        raise RuntimeError("完课状态分页超出范围，已停止")
 
     def _study_flat_courses(
         self,
@@ -1632,6 +1717,7 @@ class WeBanClient:
                 project_prefix,
                 answers_json,
                 force_restudy,
+                choose_type=choose_type[0],
             ):
                 return
 
@@ -1689,7 +1775,7 @@ jupiter_fallback=true 时也补翻页轨迹。再答题，最后完课。
         query = parse_qs(urlparse(course_url).query)
         source_str = get_source_str(query)
         is_lyra = query.get("weiban", [None])[0] != "weiban" and query.get("lyra", [None])[0] == "lyra"
-        if "userCourseId" not in course and not is_lyra:
+        if not is_lyra:
             uid = query.get("userCourseId")
             if uid and uid[0]:
                 course["userCourseId"] = uid[0]
@@ -1856,7 +1942,7 @@ jupiter_fallback=true 时也补翻页轨迹。再答题，最后完课。
         if finish_first:
             res = self._finish_course(course, task, query, course_url, unique_no)
             if not _check_code_ok(res, allow_200=False):
-                raise RuntimeError(f"{course_prefix} 完成失败，已停止学习：{res}")
+                raise CourseCompletionError(course_prefix, res)
         if total_step and trace_enabled:
             send_trace(total_step, finish=1)
         if item_info.get("trace_after_finish") and total_step and trace_enabled:
@@ -1868,16 +1954,11 @@ jupiter_fallback=true 时也补翻页轨迹。再答题，最后完课。
             res = self._finish_course(course, task, query, course_url, unique_no)
         # 完课走 JSONP（sdk.js finishWxCourse）：checkCode 只认 code∈{0,1}
         if not _check_code_ok(res, allow_200=False):
-            raise RuntimeError(f"{course_prefix} 完成失败，已停止学习：{res}")
+            raise CourseCompletionError(course_prefix, res)
 
-        if query.get("csComm", [None])[0] == "true" and query.get("weiban", [None])[0] == "weiban":
-            for label, load in (
-                ("相邻课程", lambda: self.api.get_course_neighbors(course["userCourseId"])),
-                ("课程评分", lambda: self.api.get_course_rating(course["resourceId"])),
-            ):
-                response = load()
-                if not _check_code_ok(response):
-                    raise RuntimeError(f"完课评价页{label}读取失败，已停止学习")
+        # Rating and neighbor information is optional UI metadata. The caller
+        # reads actual project progress; a rating-service outage must not turn
+        # a completed course into a learning failure.
         self.log.success(f"{course_prefix} 完成")
         return True
 
@@ -3011,3 +3092,4 @@ jupiter_fallback=true 时也补翻页轨迹。再答题，最后完课。
                 json.dumps(answers_json, indent=2, ensure_ascii=False, sort_keys=True)
             )
             f.write("\n")
+

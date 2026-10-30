@@ -128,6 +128,41 @@ class CompletionReconciliationTests(unittest.TestCase):
         self.client.api.get_course_neighbors.assert_not_called()
 
 
+class ExamSubmitThresholdTests(unittest.TestCase):
+    def test_random_answers_never_bypass_minimum_match_rate(self):
+        from client import WeBanClient
+        for mode in ("true", "perfect", "force"):
+            for random_answer in (True, False):
+                with self.subTest(mode=mode, random_answer=random_answer):
+                    client = object.__new__(WeBanClient)
+                    client.log = Mock()
+                    client.api = Mock()
+                    client.ai_config = {}
+                    client.record_answer = Mock(side_effect=AssertionError("must not answer"))
+                    client._load_answers_json = Mock(return_value={f"q{i}": [] for i in range(43)})
+                    client.api.exam_list_plan.return_value = {"code": "0", "data": [{
+                        "id": "plan", "examPlanId": "exam", "examPlanName": "test",
+                        "examOddNum": 3, "examFinishNum": 0,
+                    }]}
+                    client.api.exam_before_paper.return_value = {"code": "0"}
+                    client.api.exam_prepare_paper.return_value = {"code": "0", "data": {
+                        "questionNum": 50, "realName": "test", "userIDLabel": "test",
+                        "paperScore": 100, "answerTime": 60,
+                    }}
+                    client.api.exam_start_paper.return_value = {"code": "0", "data": {
+                        "questionList": [{"title": f"q{i}"} for i in range(50)],
+                    }}
+                    client.run_exam(
+                        exam_mode=mode, random_answer=random_answer,
+                        exam_submit_match_rate=100,
+                        only_project={"projectName": "test", "userProjectId": "project"},
+                    )
+                    client.api.exam_start_paper.assert_called_once()
+                    client.record_answer.assert_not_called()
+                    client.api.exam_submit_paper.assert_not_called()
+                    client.log.error.assert_called_once()
+
+
 class RetryTests(unittest.TestCase):
     def session(self, effects):
         client = LoggingSession(log=Mock())

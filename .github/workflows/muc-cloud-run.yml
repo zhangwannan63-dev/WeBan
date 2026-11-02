@@ -1,0 +1,88 @@
+name: 中央民族大学安全微伴
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 先检查专题，再运行课程与考试
+        type: choice
+        required: true
+        default: inspect
+        options:
+          - inspect
+          - study-and-exam
+      project:
+        description: 专题完整名称（留空时仅允许唯一专题）
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weban-cloud-muc
+  cancel-in-progress: false
+
+jobs:
+  environment:
+    name: 环境检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: 安装依赖
+        run: python -m pip install -r requirements.txt
+      - name: 检查源码和程序入口
+        run: |
+          python -m unittest -v test_network_retry.py
+          python -m compileall -q main.py client.py api.py captcha.py cloud_run.py
+          python main.py --help
+          python -c "import cv2; cv2.dnn.readNetFromONNX('captcha_model.onnx'); print('OCR model loaded')"
+      - name: 检查浏览器
+        run: |
+          command -v google-chrome
+          google-chrome --headless --disable-gpu --dump-dom about:blank
+      - name: 检查完成
+        run: echo "依赖、源码、模型和浏览器检查通过。真实账号登录需另选 login-check。"
+
+  run:
+    name: 账号任务
+    if: github.event_name == 'workflow_dispatch' && inputs.mode != ''
+    needs: environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      WB_CLOUD_MODE: ${{ inputs.mode }}
+      WB_TENANT_NAME: 中央民族大学
+      WB_PROJECT_NAME: ${{ inputs.project }}
+      WB_USERNAME: ${{ secrets.WB_MUC_USERNAME }}
+      WB_PASSWORD: ${{ secrets.WB_MUC_PASSWORD }}
+      WB_DATA_DIR: /tmp/weban-muc-data
+      WB_BROWSER_PATH: /usr/bin/google-chrome
+      WB_DEBUG: 'false'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: 安装依赖
+        run: python -m pip install -r requirements.txt
+      - name: 运行任务
+        run: python muc_cloud_run.py
+      - name: 清理临时账号数据
+        if: always()
+        shell: python
+        run: |
+          import os, shutil
+          shutil.rmtree(os.environ["WB_DATA_DIR"], ignore_errors=True)

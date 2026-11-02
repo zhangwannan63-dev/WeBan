@@ -42,7 +42,7 @@ jobs:
       - name: 检查源码和程序入口
         run: |
           python -m unittest -v test_network_retry.py
-          python -m compileall -q main.py client.py api.py captcha.py cloud_run.py
+          python -m compileall -q main.py client.py api.py captcha.py cloud_run.py muc_cloud_run.py
           python main.py --help
           python -c "import cv2; cv2.dnn.readNetFromONNX('captcha_model.onnx'); print('OCR model loaded')"
       - name: 检查浏览器
@@ -50,7 +50,7 @@ jobs:
           command -v google-chrome
           google-chrome --headless --disable-gpu --dump-dom about:blank
       - name: 检查完成
-        run: echo "依赖、源码、模型和浏览器检查通过。真实账号登录需另选 login-check。"
+        run: echo "环境检查通过，随后按所选模式读取专题或执行任务。"
 
   run:
     name: 账号任务

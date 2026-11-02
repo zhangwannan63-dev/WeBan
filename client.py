@@ -2163,7 +2163,7 @@ jupiter_fallback=true 时也补翻页轨迹。再答题，最后完课。
                 prepare_paper = prepare_paper["data"]
                 question_num = prepare_paper["questionNum"]
                 self.log.info(
-                    f"考试信息：用户：{prepare_paper['realName']}，ID：{prepare_paper['userIDLabel']}，"
+                    f"考试信息："
                     f"题目数：{question_num}，试卷总分：{prepare_paper['paperScore']}，"
                     f"限时 {prepare_paper['answerTime']} 分钟"
                 )
